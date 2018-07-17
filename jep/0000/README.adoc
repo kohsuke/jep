@@ -170,6 +170,20 @@ API compatible).
 . **Modernizing the tooling to write Data APIs** (introducing SparkJava and Jackson to expose the data). SparkJava is easy to use, simple, lightweight
 and it evolves in a backward compatible way (they say in the documentation). Jackson is the de-facto standard tool to serialize/deserialize JSON nowadays.
 Jackson and SparkJava would be the replacement for Stapler when writing HTTP APIs.
+. **Why Spark?**. There are a lot of frameworks/libraries to create HTTP web services, however, for the goal of this proposal, a lightweight framework
+seems to fit better than others (thinking about Jersey, for example):
+.. SparkJava does not do any classpath scanning to build up the routes, so it works isolatedly based on a series of static calls from plugins code.
+This will avoid potential issues with the "not-so-standard" Jenkins class loader model (and the `JenkinsRule` way of testing).
+.. SparkJava only needs an additional servlet filter to get into the play (which can be defined using already existent Jenkins extension points, see
+https://github.com/amuniz/credentials-plugin/blob/data-api/src/main/java/com/cloudbees/plugins/credentials/api/endpoint/SparkFilter.java[SparkFilter.java]
+which is the only code needed to get SparkJava working in Jenkins).
+.. Docs explicitly say "Spark is always backwards compatible", which is quite important if we build an API on top of it.
+.. Routes are defined statically on startup (as opposite to annotations-based), so it allows the new API to easily perform checks on possible
+duplicated/overlapping routes coming from different plugins.
+.. SparkJava API is consistent, simple, understandable, and flexible for handling requests, responses and filters. Perfect for the size of
+HTTP APIs defined by Jenkins plugins.
+.. SparkJava does not define nor it's coupled to any serialization/deserialization library which could clash with Jenkins (ie. JAXB, which is the default
+for Jersey).
 
 Note that **migrating all existent HTTP API and CLI endpoints is not the goal of this JEP**.
 This proposal is about providing and supporting a new way to expose data in Jenkins, to be used on new developments and **eventually migrate** existing
