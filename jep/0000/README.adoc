@@ -257,8 +257,10 @@ A PoC has been written using the `credentials-plugin` and its extension `ssh-cre
 
 Note that the `api` package in `credentials` would be finally placed under the new `data-api-plugin`.
 
-* Credentials PoC: https://github.com/jenkinsci/credentials-plugin/compare/master...amuniz:data-api
-* SSH Credentials PoC: https://github.com/jenkinsci/ssh-credentials-plugin/compare/master...amuniz:data-api
+* Credentials PoC: `https://github.com/jenkinsci/credentials-plugin/compare/master...amuniz:data-api`
+* SSH Credentials PoC: `https://github.com/jenkinsci/ssh-credentials-plugin/compare/master...amuniz:data-api`
+
+(The three dots in the links are rendered badly and they point to an empty compare view, so just copy and paste the link in a new tab).
 
 == References
 
