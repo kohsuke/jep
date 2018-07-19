@@ -66,11 +66,6 @@ endif::[]
 
 == Abstract
 
-[TIP]
-====
-Give a short (200 word) description of the technical issue addressed.
-====
-
 Jenkins does not provide a homogeneous, easy to understand and easy use external API
 (through CLI and HTTP) to manage Jenkins data.
 
@@ -82,13 +77,6 @@ This JEP is introducing both a new set of APIs to guide developers to write bett
 new tooling to easily define the Resources layer to be exposed, as well as modern ways to build an HTTP/REST API.
 
 == Specification
-
-[TIP]
-====
-Provide a detailed specification what is being proposed.
-Be as technical and detailed as needed to allow new or existing Jenkins developers
-to reasonably understand the scope/impact of an implementation.
-====
 
 Main goals:
 
@@ -107,6 +95,8 @@ using homogeneous access regardless the public interface used for it).
 . The _Data API_ will provide a mechanism to generate and parse JSON messages using `@Symbol` from the structs-plugin, so messages can look like:
 ```
 {
+  version: 1,
+  data:[{
     "id": "github-key",
     "type": "sshPrivateKey"
     "scope": "GLOBAL",
@@ -114,6 +104,7 @@ using homogeneous access regardless the public interface used for it).
     "username": "john.doe",
     "privateKey": "<redacted>",
     "passphrase": "<redacted>"
+  }]
 }
 ```
 Note the `type` attribute, which is defined in the resource class as:
@@ -122,6 +113,10 @@ Note the `type` attribute, which is defined in the resource class as:
 public class SSHPrivateKeyResource extends APIResource
 ```
 The `type` parameter is used for deserialization too.
+
+Also note the "version" attribute. It is added by the API to all messages (the real message payload goes into `data`).
+This version attribute can be used to handle backward incompatible changes in the API. It would be initially `version: 1`
+in all messages.
 
 Next image shows the components involved in a common use of the Data API.
 `APIResource` represents the Resouces layer which isolates Model from data exposure APIs (HTTP, CLI, Configuration as Code, ...).
@@ -132,11 +127,6 @@ tooling for both sides, consumer and model).
 image::components.png[Components Diagram]
 
 == Motivation
-
-[TIP]
-====
-Explain why the existing code base or process is inadequate to address the problem that the JEP solves.
-====
 
 There are currently two ways to expose data outside Jenkins: CLI and HTTP API.
 Both APIs do not guide developers on what to return and the tooling to implement them is obsolete and limited.
@@ -151,13 +141,6 @@ mix of human readable format and XML of all colors.
 * **Outdated REST API tooling**: The HTTP API is based on `hudson.model.Api` class which makes nearly impossible to write a proper REST API.
 
 == Reasoning
-
-[TIP]
-====
-Explain why particular design decisions were made.
-Describe alternate designs that were considered and related work, e.g. how the feature is supported in other systems.
-Provide evidence of consensus within the community and discuss important objections or concerns raised during discussion.
-====
 
 There are two main design decisions here:
 
@@ -192,80 +175,22 @@ path for HTTP).
 
 == Backwards Compatibility
 
-[TIP]
-====
-Describe any incompatibilities and their severity.
-Describe how the JEP proposes to deal with these incompatibilities.
-If there are no backwards compatibility concerns, this section may simply say:
-There are no backwards compatibility concerns related to this proposal.
-====
-
 There are no backwards compatibility concerns related to this proposal.
 Those model objects not implementing `APIExportable` will be just ignored (so they won't be included in data messages).
 
 == Security
 
-[TIP]
-====
-Describe the security impact of this proposal.
-Outline what was done to identify and evaluate security issues,
-discuss of potential security issues and how they are mitigated or prevented,
-and how the JEP interacts with existing permissions, authentication, authorization, etc.
-If this proposal will have no impact on security, this section may simply say:
-There are no security risks related to this proposal.
-====
-
 There are no security risks related to this proposal.
 
 == Infrastructure Requirements
-
-[TIP]
-====
-Describing any impact on Jenkins project infrastructure.
-
-Include any additions or changes, interactions with exiting components,
-potential instabilities, service-level agreements,
-and responsibilities for continuing maintenance.
-Explain the scope of infrastructure changes with sufficient detail
-to allow initial and on-going cost (in both time and money) to be estimated.
-If this proposal will have no impact on infrastructure, this section may simply say:
-There are no new infrastructure requirements related to this proposal.
-====
 
 There are no new infrastructure requirements related to this proposal.
 
 == Testing
 
-[TIP]
-====
-If the JEP involves any kind of behavioral change to code
-(whether in a Jenkins product or backend infrastructure),
-give a summary of how its correctness (and, if applicable, compatibility, security, etc.) can be tested.
-
-In the preferred case that automated tests can be developed to cover all significant changes, simply give a short summary of the nature of these tests.
-
-If some or all of changes will require human interaction to verify, explain why automated tests are considered impractical.
-Then summarize what kinds of test cases might be required: user scenarios with action steps and expected outcomes.
-Might behavior vary by platform (operating system, servlet container, web browser, etc.)?
-Are there foreseeable interactions between different permissible versions of components (Jenkins core, plugins, etc.)?
-Are any special tools, proprietary software, or online service accounts required to exercise a related code path (Active Directory server, GitHub login, etc.)?
-When will testing take place relative to merging code changes, and might retesting be required if other changes are made to this area in the future?
-
-If this proposal requires no testing, this section may simply say:
-There are no testing issues related to this proposal.
-====
-
 There are no testing issues related to this proposal.
 
 == Prototype Implementation
-
-[TIP]
-====
-Link to any open source reference implementation of code changes for this proposal.
-The reference implementation need not be completed before the JEP is <<accepted>>,
-but must be completed before any JEP is given "Final" status.
-JEPs which will not include code changes may omit this section.
-====
 
 A PoC has been written using the `credentials-plugin` and its extension `ssh-credentials-plugin`.
 
@@ -276,8 +201,4 @@ Note that the `api` package in `credentials` would be finally placed under the n
 
 == References
 
-[TIP]
-====
-Provide links to any related documents.
-This will include links to discussions on the mailing list, pull requests, and meeting notes.
-====
+N/A.
