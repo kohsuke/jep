@@ -226,8 +226,10 @@ So `GET JENKINS_ROOT_URL/data/mymodel` would return something like:
 {
   version: 1,
   data: [{
+    type: "mymodel",
     foo: "bar"
   }, {
+    type: "mymodel",
     foo: "baz"
   }]
 }
