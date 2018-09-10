@@ -297,7 +297,7 @@ configuration files.
 
 * https://github.com/amuniz/configuration-as-code-plugin/pull/1
 
-So, having all the PoC code in place both credentials CLI and JCasC will be using the same payload data format:
+So, having all the PoC code in place **both credentials CLI and JCasC will be using the same payload data format**:
 
 ```
 $> java -jar jenkins-cli.jar list-credentials system::system::jenkins --yaml
@@ -420,7 +420,7 @@ sudo_password    root/******
 ============================
 ```
 
-And JCasC format:
+The above output is just plain text, and JCasC (below) format is based on the Java structure of the actual model:
 
 ```
 credentials:
