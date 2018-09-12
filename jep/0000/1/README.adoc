@@ -272,6 +272,8 @@ the data-api harness (as long as the subclass implements `APIExportable#getDataA
 There are no backwards compatibility concerns related to this proposal.
 Those model objects not implementing `APIExportable` will be just ignored (so they won't be included in data messages produced using the new layer).
 
+Any existent data exposure mechanism will remain the same (ie. hudson.model.Api), this JEP is not interfering with that in any way.
+
 == Security
 
 There are no security risks related to this proposal.
