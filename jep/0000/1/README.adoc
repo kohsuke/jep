@@ -66,86 +66,119 @@ endif::[]
 
 == Abstract
 
-Jenkins does not provide a homogeneous, user friendly and easy use representation of its stored data.
+Different parts of Jenkins provides different mechanisms to convert between in-memory object graphs and external structured data representations. As a result, plugin developers would have to deal with many of those. Some of more common conversion mechanisms are also brittle to the evolution of data model, and tend to produce accidental data representation, instead of encouraging plugin developers to design them.
 
-Existent data exposers use their own view of the data model (including configuration data stored by Jenkins), some of them
-use the model directly (i.e. `get-job` CLI) and others return an arbitrary representation of the model (i.e. `list-credentials`
-from _credentials-plugin_, which returns a plain text representation of credentials).
+This JEP introduces the new "Data API" that intends to act as an "universal" conversion mechanism.
 
-Main contributor to this problem is a **non-existent API to properly create a Resources layer to be exposed**.
 
-This JEP is introducing that new API to guide developers to write that resources layer (also called DTO layer in some other literature).
 
 == Specification
+=== Data class
+Data API introduces the notion of "data class", which is a Java class that participates in serialization. Data classes are written by plugin developers, and they opt into this. The opt-in avoids most of the security problems inherent to deserialization libraries (ie. Jackson), as no arbitrary class can be instantiated during deserialization.
 
-Main goals:
+A data class is repsented by a `DataModel`, which provides several key activities:
 
-. Isolate Model from public API: introduce a new _Resources layer_ based on new APIs (in advance the _Data API_)
-that can be leveraged for any data exposure (CLI and WS initially). It brings flexibility and improved
-API UX for CLI/WS users and developers.
-. Model can evolve whilst keeping backward compatibility in the Resources layer and Resources can
-transform, map or simplify the real model to adapt it for consumers.
-. The new _Data API_ is decoupled from Jenkins CLI and/or REST endpoints: the way to expose data is not a responsibility of the data itself.
-(other JEPs are coming for that).
-. API messages are versioned (note the "version" attribute in messages) for easier evolution and correct handling of breaking changes.
-. Why _Data API_? Because this JEP focuses on data access (Create, Read, Update and Delete of any Jenkins stored model
-using homogeneous access regardless the interface used for it).
-. The _Data API_ will provide a mechanism to generate and parse JSON messages using `@Symbol` from the structs-plugin, so messages will look like:
+* *Serialization*: read/write instances to/from a tree representation
+* *Schema*: how instances get represented in a tree representation needs to be deterministic without any instance of a model
+
+`DataModel` does not dictate a specific databinding approach (or lack thereof.) Different `DataModel` implementations can introduce different databinding mechanisms, which is used to support existing databinding mechanisms, or brand new ones.
+
+`DataModel` does, however, dictate the shape of a tree representation of a data class, basically to a map from names to values, where values can be primitives, data classe instances, or arrays of those. This expressiveness is in line with existing databinding mechanisms in Jenkins.
+
+Protocol-wise, plugin developers designate a Java class as a data class by inserting an `DataModelFactory` extension. Most plugin developers, however, will likely use one of the available convenience mechanisms built on top of `DataModelFactory`.
+
+=== Defining data class
+In order to encourage uniformity, consistency, and convenience, Data API comes with several ready-made `DataModel` that establishes different conventions, and corresponding `DataModelFactory` hookup. Plugin developers are encouraged to use one of those. It should be a rare occurence to find a need for a full-scratch `DataModel`.
+
+==== POJO data class
+A POJO class can be designated as a data class with the `@DataClass` annotation, like this:
+
 ```
-{
-  version: 1,
-  data:[{
-    "id": "github-key",
-    "type": "sshPrivateKey"
-    "scope": "GLOBAL",
-    "description": "GitHub checkout key",
-    "username": "john.doe",
-    "privateKey": "<redacted>",
-    "passphrase": "<redacted>"
-  }]
+@DataClass @Symbol("apple")
+public class Apple {// any POJO will do
+  private String color;
+  public void setColor(String color) {
+    this.color = color;
+  }
+  public String getColor() {
+    return color;
+  }
 }
 ```
-Note the `type` attribute, which is defined in the resource class as:
+
+Databinding will follow the Java Bean convention. If a `DataModel` is explicitly provided by other means, that takes precedence.
+
+==== Describable as data class
+For grandfathering existing widely-used component model, all `Describable` subtypes, which uses `@DataBoundConstructor` and `@DataBoundSetter`, automatically become data classes, through implicit backward-compatible `DataModel` whose tree representation is idencial to what Stapler has historically done for them. If a `DataModel` is explicitly provided by other means, that takes precedence:
+
 ```
-@Symbol("sshPrivateKey")
-public class SSHPrivateKeyResource extends APIResource
+public static class Cherry extends AbstractDescribableImpl<Cherry> {
+    private String color;
+
+    @DataBoundConstructor
+    public Cherry(String color) {
+        super("Cherry");
+        this.color = c;
+    }
+    public String getColor() {
+        return color;
+    }
+    @Extension @Symbol("cherry")
+    public static final class DescriptorImpl extends FruitDescriptor {}
+}
 ```
-The `type` parameter is used for deserialization too, which avoids most of the security problems inherent to deserialization libraries (ie. Jackson),
-as no arbitrary class can be instantiated during deserialization.
 
-Also note the "version" attribute. It is added by the API to all messages (the real message payload goes into `data`).
-This version attribute can be used to handle backward incompatible changes in the API. It would be initially `version: 1`
-in all messages. This attribute is handled by the API itself and will be used to accomodate potentially imcompatible changes
-in the part of the message generated by the API. In other words, content under the `data` attribute (generated by extensions of the API)
-is not subject to the `version` attribute.
+==== Custom data model
+`CustomDataModel` is provided to allow the author of a data class to hand-author serialization code and associated schema, where such flexibility is necessary. For example, when dealing with complicated data evolution scenario.
 
-Next image shows the components involved in a common use of the Data API.
-`APIResource` represents the Resouces layer which isolates Model from data exposure APIs (HTTP, CLI, Configuration as Code, ...).
-`Model` boxes represent the existing model which is using traditional `@DataBoundConstructor` and `@DataBoundSetter` annotations.
-`data-api-plugin` is the plugin providing the interoperability layer for consumers (it contains all needed APIs and
-tooling for both sides, consumer and model).
+The following example illustrates how to do this:
 
-image::components.png[Components Diagram]
+```
+public class Banana {
+    public boolean yellow;
+    public Banana() {
+    }
+}
 
-Any data model is commonly highly polimorphic, and Jenkins data model is it too. A model entity (think of a `Credentials` object, for example) can have different representations depending
-on the installed plugins (which can add credentials types). This polimorphism needs to reflect on the Data API endpoints, where a single endpoint
-must be able to serialize any form of the base entity (an `APIResource` at this layer).
-In this proposal that is handled as long as leafs elements on the model hierarchy implement `APIExportable#getDataAPI()`, so a call
-to that method in the top level entity (`Credentials`, in the example) will get the actual `APIResource` mapping the child model,
-then the serialization framework will do the rest (as it introspect the object to be serialized).
+@Extension @Symbol("banana")
+public static class BananaModel extends CustomDataModel<Banana> {
+    public BananaModel() {
+        super(Banana.class,
+            // define schema by defining parameters
+            parameter("ripe",boolean.class));
+    }
 
-=== How does this work for plugin developers?
+    @Override
+    public Mapping write(Banana object, DataContext context) {
+        Mapping m = new Mapping();
+        m.put("ripe",object.yellow);
+        return m;
+    }
 
-There is a PoC using the credentials plugin in a section below. But let's see how the implementation would be in a simpler case.
+    @Override
+    public Banana read(Mapping input, DataContext context) throws IOException {
+        Banaba b = new Banana();
+        b.yellow = m.get("ripe").asBoolean();
+        return b;
+    }
+}
+```
 
-Given this initial model:
+A common technique is for a custom data model to partially delegate to other data model implementation, such as `PojoDataModel`, and do some pre/post processing on the tree representation.
 
+The above sample also shows a convenience mechanism of defining a `DataModel` by delcaring itself as an extension. This mechanism can be used to override implicit `DataModel` used for `@DataClass` and `Describable` explained above.
+
+==== DTO / in-memory class translation
+In order to promote the idea of "designing the tree representation as the first class citizen," Data API provides another convention of defining data class, by using another POJO class as a data-transfer object (DTO) that faithfully represents the tree representation, and plugin developers manually providing translation between a data class and a DTO class.
+
+Marker interfaces are used to guide plugin developers through the passage by turning convention errors into compilation errors. The split also allows in-memory class to evolve whilst keeping backward compatibility in the DTO layer and DTO can transform, map or simplify the in-memory model to adapt it for consumers.
+
+Given this initial in-memory class,
 ```
 public class MyModel {
 
     private String foo;
 
-    @DataBoundConstructor
     public MyModel(String foo) {
         this.foo = foo;
     }
@@ -154,21 +187,17 @@ public class MyModel {
         return foo;
     }
 
-    public void setFoo(String foo) {
-        this.foo = foo;
-    }
-
+    // all sorts of behaviours. not necessarily following POJO convention
 }
 ```
 
-To define the Resource for that specific model:
+To define the DTO class for that specific model:
 
 ```
-public class MyModel implements APIExportable {
+public class MyModel implements APIExportable<MyModelResource> {
 
     private String foo;
 
-    @DataBoundConstructor
     public MyModel(String foo) {
         this.foo = foo;
     }
@@ -177,31 +206,29 @@ public class MyModel implements APIExportable {
         return foo;
     }
 
-    public void setFoo(String foo) {
-        this.foo = foo;
-    }
-
     @Override
-    public MyModelResource getDataAPI() {
+    public MyModelResource toResource() {
         return new MyModelResource(this);
     }
 
     @Symbol("mymodel")
     public static final class MyModelResource extends APIResource {
 
-        private String foo;
+        private String bar;
 
         MyModelResource(MyModel model) {
-            foo = model.getFoo();
+            bar = model.getFoo();
         }
 
-        public String getFoo() {
-            return foo;
+        public MyModelResource() {}
+
+        public String getBar() {
+            return bar;
         }
 
         @Override
         public MyModel toModel() {
-            return new MyModel(foo);
+            return new MyModel(bar);
         }
     }
 }
@@ -210,10 +237,9 @@ public class MyModel implements APIExportable {
 A hypothetical handler of this data would do something like:
 
 ```
-MyModel model = service.get("id");
-Serializer s = new Serializer();
-String json = s.serialize(model.getDataAPI());
-return ...
+MyModel model = new MyModel("Yo");
+Serializer s = new JsonSerializer();
+System.out.println(s.serialize(model);
 ```
 
 So a serialized form for a list of `MyModelResource` would look like:
@@ -223,43 +249,196 @@ So a serialized form for a list of `MyModelResource` would look like:
   version: 1,
   data: [{
     type: "mymodel",
-    foo: "foo"
-  }, {
-    type: "mymodel",
-    foo: "bar"
+    bar: "Yoo"
   }]
 }
 ```
 
+NOTE: now that I write it this way, not sure if terms like "Resource" or "API" are appropriate.
+
+
+
+
+=== Format independence
+In order to keep most of Data API independent from partiular data format such as JSON and YAML, a canonical representation of a tree structure is provided as `TreeNode` and 3 of its subypes:
+
+* *Scalar*: primitive value like string, number, and boolean
+* *Sequence*: a list of `TreeNode`
+* *Mapping*: dictionary from names to `TreeNode`
+
+`Serializer` is responsible for converting these from/to a textual representation of a specific format, such as JSON, YAML, and XML. It is possible, though not particularly encouraged, for plugin developers to define additional serializers.
+
+=== Enveloping convention
+(inheriting this from the original, though I haven't fully internalized why this is valuable enough to warrant addition)
+
+Data API defines a convention to approach versioning so that different data classes and different callers of Data API provided consistent feel to users.
+
+The first convention is enveloping, which adds the version number of Data API itself and will be used to accomodate potentially imcompatible changes
+in the part of the message generated by the API.
+```
+{
+  version: 1,
+  data:{
+    ... data object ...
+  }
+}
+```
+This format can be read as follows:
+```
+MyDataClass instance = new JsonSerializer().read(MyDataClass.class, new FileInputStream("my.json"));
+```
+
+Callers of Data API can choose to define its own enveloping scheme and provide the version number to the system:
+```
+{
+  ... data object ...
+}
+```
+```
+instance = new JsonSerializer().read(1, MyDataClass.class, new FileInputStream("my.json"));
+```
+
+=== Data class versioning
+Envelope version is a version of Data API, not a version of data classes. Data API defines a separate convention for versioning of data classes.
+
+The goal of the convention is as follows:
+
+* Allow Jenkins to reliably consume data produced by neighboring systems that produce data in an older format, even when incompatible changes occure.
+* Allow neighboring systems that consume data from Jenkins to fail in a reliable way, when an incompatible change occurs.
+
+Specifically, when a change occurs in the serialized format of a data class, we call it _compatible_ if the updated reader can still read everything produced by the older writer and achieve the same semantics AND the updated writer can produce data that can be still consumed by the older reader, possibly ignoring parameters.
+
+The easiest example of this is adding a new optional parameter. The rew reader can consume everything written before, and the new writer produces data that can be still consumed by the older reader, though newly added properties will not be ignored. Removing an optional parameter is another example of a compatilbe change.
+
+An example of incompatible change is to rename a mandatory parameter from "foo" to "bar." Even with a modified reader code to recognize the "foo" attribute, the older reader will not see required "foo" and fails.
+
+An incompatible change should be discouraged, but if it needs to be made, Data API advocates for the model class to introduce the integer "version" parameter (that starts from 2, since 1 was the first implicit version) in its serialized form to designate the fact, and maintain the reader code capable of reading data marked with earlier versions.
+
+The use of the "version" parameter for any other purpose is strongly discouraged.
+
+=== Symbol
+In order to encourage a tree representation accessible to humans, every data class has a short symbol name, similar to https://github.com/jenkinsci/structs-plugin/blob/master/annotation/src/main/java/org/jenkinsci/Symbol.java[the `@Symbol` annotation], controlled by `DataModel`.
+
+This symbol name is used to represent the polymorphism, a common idiom of data model design in Jenkins, where one data class defines a property of an extension point, which at runtime holds a reference to a concrete implementation of that extension point. See the example below,
+
+```
+@DataClass @Symbol("parent")
+public class Parent {
+  private Child child;
+  public void setChild(Child child) {
+    this.child = child;
+  }
+  public Child getChild() {
+    return child;
+  }
+}
+@DataClass
+public abstract class Child {}
+@DataClass @Symbol("boy")
+public class Boy extends Child {}
+@DataClass @Symbol("girl")
+public class Girl extends Child {}
+```
+
+Most `DataModel` implementations determine the name by looking up the `@Symbol` annotation on relevant classes. Just like the `@Symbol` annotation, a symbol name is not globally unique, and instead is unique only within the context of specific base extension type.
+
+Data API reserves the `type` attribute to record the symbol information. For example, serializing a `Parent` in an envelope might produce something like the following:
+```
+{
+  version: 1,
+  data:{
+    type: parent,
+    child: {
+      type: boy
+    }
+  }
+}
+```
+
+=== Subsuming existing systems
+This section discusses parts of Data API primarily meant for backward compatibility with existing databinding mechanisms that Data API aims to replace.
+
+==== Compatibility with Stapler form binding
+<< TBD >>
+
+==== Compatibility with Pipeline (aka "structs")
+<< TBD >>
+
+==== Compatibility with CasC
+<< TBD >>
+
+
+
+
 
 == Motivation
+=== 14 different standards
+Jenkins ecosystem has many mechanisms to convert in-memory object graphs to external structured data representations:
 
-There are currently three data handlers in Jenkins: CLI, HTTP API and Jenkins Configuration as Code (JCasC).
+* Stapler form binding that takes JSON and does data-binding via `@DataBound` annotations, used for config form submissions
+* `structs` plugin that somewhat duplicates the above, used by Pipeline
+* `configuration-as-code` plugin that somewhat duplicates the above, used by CasC
+* Direct use of Jackson, for example can be seen in Blue Ocean
+* XML serialization via XStream, used for persisting data and config to $JENKINS_HOME
+* Stapler object graph traversal, driven by `@Export` annotations, used for the '/api' "REST" API
 
-Each of them is potentially using different representations of the model, and some are using the model directly.
-The practice has serious drawbacks:
+Those implementations are all pretty comparable, being driven by metadata from Java model. They all deal with similar concerns, such as converting arbitrary graph into a tree, backward compatibility, data evolution, and so on.
 
-* **Lack of flexibility in the API**: response messages are tied to the model (which is usually not suitable for external consumption).
-Blue Ocean is an example, a whole new HTTP API was written because the built-in Jenkins one was not enough and there was no way to adapt it
-without adapting the model too.
-* **Heterogeneous data format**: there is no Java API to guide developers on what to return, so the current data exposure is a
-mix of human readable format and XML/JSON/YAML of all colors.
+We want the conversation mechanism that works more universally. Practically speaking, it might not fully replace everything in the above list, but we want it to replace several of those, and prevent more from being developed in the future.
+
+image::components.png[align=center]
+
+=== Plugin developer burden
+Plugin developers regularly need to support those multiple databinding mechanisms, and this results in higher cognitive overhead, rooms for mistakes, and inconsistencies in different mechanisms. We want to reduce this.
+
+=== Precise control for the syntax
+Most of the conversion mechanisms used today rely on implicit databinding driven from the structure of Java class and annotations.
+
+This is fine for simple things and early on, but over time, as the code and the data format evolves, the implicitness of the databinding gets in the way of precisely controlling the conversion behaviour.
+
+=== Multiple data format support
+From the "14 different standards" goal, it follows that we need to support multiple different data format, at least JSON, YAML, and XML.
+
+Data API deals with the common subset of these data formats. Namely, maps, sequences, and scalars with limited datatypes. The goal is to allow components to serialize themselves into a composition of those, to be read back in. The resulting tree model needs to be approachable to humans, but it need not use every language feature available. For example, we don't use XML attributes.
+
+=== Outlet independent
+Also follows from the "14 different standards" goal is that Data API is meant to be used by different I/O systems and thus indifferent to how the tree representation is used.
+
+For example, one use of Data API might build a set of CLIs, another might define a series of REST endpoints. The way to expose data is not a responsibility of the data itself nor Data API. Other JEPs are coming to define those subsystems.
+
+=== Human accessible tree representation
+<< TBD: don't be a dump format like XStream, be a human readable format like CasC >>
+
+
 
 == Reasoning
 
-**The use of a resources layer instead of relying on model objects directly**. The alternative is "status quo", keep exposing the model through Stapler
-and `doXX` methods (or `getDynamic` to be able to have path parameters).
-There could be an objection on the proposed resources layer: there is more code to write to expose data and sometimes resource classes will
-just mirror the model.
-It is true, but in exchange there is a huge gain on flexibility and maintainability (the model can be modified freely whilst keeping the external data
-API compatible).
-. **Modernizing the tooling to write Data APIs**: this API layer will enable others to modernize by leveraging the new Resources.
+=== Grandfather existing databinding
+One of the lessons from CasC is that if we introduce a wholy new databinding mechanism, it will face a chicken and egg problem. No one wants to consume new API because no data classes support them, and no plugin developers care to update their classes to support new API because nobody consumes them.
 
-Note that **migrating all existent HTTP API and CLI endpoints is not the goal of this JEP**.
-This proposal is about providing and supporting a new way to expose data in Jenkins, to be used on new developments and **eventually migrate** existing
-endpoints. So the existent HTTP API and CLI commands will coexist with the ones using this new API.
+If, OTOH, new API can pick up some of the existing databinding mechanism and leverage those, then new API instantly have tons of classes available for databinding, and new API can also replace that mechanism entirely.
 
-=== What about core model objects?
+For this purpose, an ideal existing mechanism to replace is one that's already widely in use, one that is bi-directional, one that uses a simple tree representation, and one that has limited simplistic databinding behaviour. From these criteria, we have chosen Stapler form binding, which is currently used to render config form in web UI, CasC, and Pipeline via the structs plugin.
+
+
+=== Federation of databinding, not the one true databinding
+Why don't we just use Jackson, JAXB, XStream, whatever and be done with it?
+
+In order to grandfather existing databinding, Data API cannot pick one winning databinding solution and be done with it. We need to allow different data classes to do databinding differently instead, and compose the reult into one tree representation and back.
+
+Another reasoning to avoid embracing one true databinding is the need to deal with a complicated data evolution scenario also calls for the ability to escape the databinding mechanism altogether, and instead to hand-author a serialization code.
+
+This led to the `DataModel` design where every data class brings in its own data model and serialization behaviour, and Data API providing a number of convenient implementations and conventions.
+
+It is conceivable, while not yet proven, to write a `DataModel` that uses existing databinding libraries like Jackson.
+
+=== Schema support
+<< TBD. Pipeline and CasC needs this >>
+
+=== Why Data API is in core?
+<< TBD. Or maybe not >>
+
+NOTE: I'm thinking the contract part will go to Stapler, extensions and discovery will go to core, and possibly some utilities in a library plugin?
 
 Ideally most of the new code should go into a new plugin (data-api-plugin), however some new interfaces will need to be created
 in core in order to adapt core model objects in a way that extensions of that model can benefit of the new data-api features.
@@ -267,30 +446,46 @@ in core in order to adapt core model objects in a way that extensions of that mo
 For example, `JobProperty` would need to extend `APIExportable` so any subclass of it can be properly serialized by
 the data-api harness (as long as the subclass implements `APIExportable#getDataAPI()`).
 
+
+
+=== Peril of implicit databinding of in-memory object
+**The use of a DTO layer instead of relying on model objects directly**. The alternative is "status quo", keep exposing the model through Stapler
+and `doXX` methods (or `getDynamic` to be able to have path parameters).
+There could be an objection on the proposed resources layer: there is more code to write to expose data and sometimes resource classes will
+just mirror the model.
+It is true, but in exchange there is a huge gain on flexibility and maintainability (the model can be modified freely whilst keeping the external data
+API compatible).
+
+**Modernizing the tooling to write Data APIs**: this API layer will enable others to modernize by leveraging the new Resources.
+
+
 == Backwards Compatibility
+<< TBD >>
 
-There are no backwards compatibility concerns related to this proposal.
-Those model objects not implementing `APIExportable` will be just ignored (so they won't be included in data messages produced using the new layer).
-
-Any existent data exposure mechanism will remain the same (ie. hudson.model.Api), this JEP is not interfering with that in any way.
+* Data API replaces Stapler form binding
+* Data API aims to replace structs plugin but that's opt-in
 
 == Security
+<< TBD >>
 
-There are no security risks related to this proposal.
+* Opt-in behaviour of Data API helps with the security
 
 == Infrastructure Requirements
 
 There are no new infrastructure requirements related to this proposal.
 
 == Testing
+<< TBD >>
 
-There are no testing issues related to this proposal.
+* replacing Stapler form binding touches a lot of things. For a while we should keep the legacy databinding code and expose this slowly.
 
 == Prototype Implementation
 
-A PoC has been written using the `credentials-plugin` as guinea pig.
+The current version of prototype:
 
-Note that the `api` package in `credentials` would be finally placed under the new `data-api-plugin` and some basic interfaces should go to core.
+* https://github.com/jenkinsci/jenkins/tree/data-api/core/src/main/java/jenkins/data[PoC in core] and https://github.com/jenkinsci/jenkins/blob/data-api/test/src/test/java/hudson/cli/SampleDataCLITest.java[samples in test]
+
+This PoC is an iteration of the previous round of prototype, which has been written using the `credentials-plugin` as guinea pig. Note that the `api` package in `credentials` represents Data API, which would move to the new `data-api-plugin` and some basic interfaces should go to core.
 
 * https://github.com/amuniz/credentials-plugin/pull/2/files[Credentials PoC]
 
